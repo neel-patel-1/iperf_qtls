@@ -141,6 +141,9 @@ private:
     bool peerclose;
     Timestamp drain_start;
     Timestamp drain_end;
+    // OpenSSL support
+    ssize_t sendTCP(int fd, const void *buffer, size_t len, int flags );
+    SSL *conn;
 }; // end class Client
 
 #endif // CLIENT_H

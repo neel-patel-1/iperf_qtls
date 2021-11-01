@@ -116,6 +116,34 @@ void Settings_ModalOptions(struct thread_Settings *mExtSettings);
 
 static void generate_permit_key(struct thread_Settings *mExtSettings);
 
+
+/*---------------------------------------------------------------------*/
+/*--- LoadCertificates - load from files.                           ---*/
+/*---------------------------------------------------------------------*/
+void LoadCertificates(SSL_CTX* ctx, const char* CertFile, const char* KeyFile)
+{
+	/* set the local certificate from CertFile */
+    if ( SSL_CTX_use_certificate_file(ctx, CertFile, SSL_FILETYPE_PEM) <= 0 )
+    {
+        ERR_print_errors_fp(stderr);
+        abort();
+    }
+
+    /* set the private key from KeyFile (may be the same as CertFile) */
+    if ( SSL_CTX_use_PrivateKey_file(ctx, KeyFile, SSL_FILETYPE_PEM) <= 0 )
+    {
+        ERR_print_errors_fp(stderr);
+        abort();
+    }
+
+    /* verify private key */
+    if ( !SSL_CTX_check_private_key(ctx) )
+    {
+        fprintf(stderr, "Private key does not match the public certificate\n");
+        abort();
+    }
+}
+
 /* -------------------------------------------------------------------
  * command line options
  *
@@ -211,6 +239,8 @@ const struct option long_options[] =
 #ifdef WIN32
 {"reverse", no_argument, &reversetest, 1},
 #endif
+{"tls",        optional_argument, NULL, 'E'},
+{"ktls",             no_argument, NULL, 'K'},
 {0, 0, 0, 0}
 };
 
@@ -495,6 +525,25 @@ void Settings_ParseCommandLine (int argc, char **argv, struct thread_Settings *m
 
 } // end ParseCommandLine
 
+static void Setup_TLS(thread_Settings *mExtSettings, int version)
+{
+    SSL_library_init();
+    OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
+
+    if (version == 13) {
+        mExtSettings->ssl_ctx = SSL_CTX_new(TLS_method());
+        SSL_CTX_set_cipher_list(mExtSettings->ssl_ctx, "TLS1_3_RFC_AES_128_GCM_SHA256");
+    } else {
+        mExtSettings->ssl_ctx = SSL_CTX_new(TLSv1_2_method());
+        SSL_CTX_set_cipher_list(mExtSettings->ssl_ctx, "ECDHE-RSA-AES128-GCM-SHA256");
+    }
+
+    SSL_CTX_set_ecdh_auto(mExtSettings->ssl_ctx, 1);
+    EVP_add_cipher(EVP_aes_128_gcm());
+    LoadCertificates(mExtSettings->ssl_ctx, "newreq.pem", "key.pem");
+}
+
 /* -------------------------------------------------------------------
  * Interpret individual options, either from the command line
  * or from environment variables.
@@ -757,6 +806,23 @@ void Settings_Interpret (char option, const char *optarg, struct thread_Settings
 
         case 'D': // Run as a daemon
             setDaemon(mExtSettings);
+            break;
+
+        case 'K': // Use KTLS
+            setKTLS( mExtSettings );
+            // fall through
+        case 'E': // Use SSL
+            if (isSSL( mExtSettings )) {
+                fprintf( stderr, "The -E option should only be specified once (ignored)\n");
+            } else if (optarg == NULL || strcmp(optarg, "v1.2") == 0) {
+                setSSL12( mExtSettings );
+                Setup_TLS( mExtSettings , 12);
+            } else if (strcmp(optarg, "v1.3") == 0) {
+                setSSL13( mExtSettings );
+                Setup_TLS( mExtSettings , 13);
+            } else {
+                fprintf( stderr, "Invalid -E option argument (TLS not enabled)\n");
+            }
             break;
 
         case 'F' : // Get the input for the data stream from a file

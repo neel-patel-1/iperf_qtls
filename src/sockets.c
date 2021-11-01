@@ -53,6 +53,9 @@
 #include "headers.h"
 #include "util.h"
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -158,7 +161,7 @@ ssize_t readn (int inSock, void *outBuf, size_t inLen) {
  * If number read < inLen then we reached EOF.
  * from Stevens, 1998, section 3.9
  * ------------------------------------------------------------------- */
-int recvn (int inSock, char *outBuf, int inLen, int flags) {
+int recvn (int inSock, void *conn, char *outBuf, int inLen, int flags) {
     int  nleft;
     int nread = 0;
     char *ptr;
@@ -172,7 +175,10 @@ int recvn (int inSock, char *outBuf, int inLen, int flags) {
 #if (HAVE_DECL_MSG_PEEK)
     if (flags & MSG_PEEK) {
 	while (nleft != nread) {
-	    nread = recv(inSock, ptr, nleft, flags);
+	    if (conn != NULL)
+		nread = SSL_read(conn, ptr, nleft);
+	    else
+	        nread = recv(inSock, ptr, nleft, flags);
 	    switch (nread) {
 	    case SOCKET_ERROR :
 		// Note: use TCP fatal error codes even for UDP
@@ -199,11 +205,15 @@ int recvn (int inSock, char *outBuf, int inLen, int flags) {
 #endif
     {
 	while (nleft >  0) {
+	    if (conn != NULL) {
+		nread = SSL_read(conn, ptr, nleft);
+	    } else {
 #if (HAVE_DECL_MSG_WAITALL)
-	    nread = recv(inSock, ptr, nleft, MSG_WAITALL);
+		nread = recv(inSock, ptr, nleft, MSG_WAITALL);
 #else
-	    nread = recv(inSock, ptr, nleft, 0);
+		nread = recv(inSock, ptr, nleft, 0);
 #endif
+	    }
 	    switch (nread) {
 	    case SOCKET_ERROR :
 		// Note: use TCP fatal error codes even for UDP
@@ -243,7 +253,7 @@ int recvn (int inSock, char *outBuf, int inLen, int flags) {
  * from Stevens, 1998, section 3.9
  * ------------------------------------------------------------------- */
 
-int writen (int inSock, const void *inBuf, int inLen, int *count) {
+int writen (int inSock, void *conn, const void *inBuf, int inLen, int *count) {
     int nleft;
     int nwritten;
     const char *ptr;
@@ -258,7 +268,10 @@ int writen (int inSock, const void *inBuf, int inLen, int *count) {
     *count = 0;
 
     while (nleft > 0) {
-        nwritten = write(inSock, ptr, nleft);
+	if (conn != NULL)
+		nwritten = SSL_write(conn, ptr, nleft);
+	else
+	        nwritten = write(inSock, ptr, nleft);
 	(*count)++;
 	switch (nwritten) {
 	case SOCKET_ERROR :

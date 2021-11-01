@@ -120,6 +120,9 @@ private:
     struct iphdr *ip_hdr;
     struct udphdr *udp_hdr;
 #endif
+    // OpenSSL support
+    SSL *conn;
+    ssize_t recvTCP( int fd, void *buf, size_t len, int flags );
 }; // end class Server
 
 #endif // SERVER_H

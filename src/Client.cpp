@@ -112,7 +112,10 @@ Client::Client (thread_Settings *inSettings) {
     }
     peerclose = false;
     isburst = (isIsochronous(mSettings) || isPeriodicBurst(mSettings) || ((isTripTime(mSettings) || isTcpDrain(mSettings)) && !isUDP(mSettings)));
+    conn = 0;
 } // end Client
+
+#include <openssl/ssl.h>
 
 /* -------------------------------------------------------------------
  * Destructor
@@ -535,6 +538,29 @@ void Client::Run () {
     }
 }
 
+ssize_t Client::sendTCP( int fd, const void *buffer, size_t len, int flags )
+{
+    ssize_t currLen;
+
+    if (!isSSL(mSettings))
+        currLen = send(fd, buffer, len, flags);
+    else {
+        if (conn == 0) {
+            conn = SSL_new(mSettings->ssl_ctx);
+#ifdef __FreeBSD__
+            SSL_set_options(conn, SSL_OP_ENABLE_KTLS);
+#endif
+            SSL_set_fd(conn, fd);
+            SSL_set_connect_state(conn);
+            SSL_do_handshake(conn);
+        }
+        currLen = SSL_write(conn, buffer, len);
+        if (currLen < 0)
+            ERR_print_errors_fp(stderr);
+    }
+    return currLen;
+}
+
 /*
  * TCP send loop
  */
@@ -601,7 +627,7 @@ void Client::RunTCP () {
 	    if (isTcpDrain(mSettings))
 		drain_start.setnow();
 #endif
-	    reportstruct->packetLen = writen(mySocket, mSettings->mBuf, writelen, &reportstruct->writecnt);
+	    reportstruct->packetLen = writen(mySocket, conn, mSettings->mBuf, writelen, &reportstruct->writecnt);
 	    FAIL_errno(reportstruct->packetLen < (intmax_t) sizeof(struct TCP_burst_payload), "burst written", mSettings);
 	} else {
 	    // printf("pl=%ld\n",reportstruct->packetLen);
@@ -613,7 +639,7 @@ void Client::RunTCP () {
 		AwaitWriteSelectEventTCP();
 	    }
 #endif
-	    reportstruct->packetLen = write(mySocket, mSettings->mBuf, writelen);
+	    reportstruct->packetLen = sendTCP(mySocket, mSettings->mBuf, writelen, 0);
 	    now.setnow();
 	    reportstruct->writecnt++;
 	    reportstruct->packetTime.tv_sec = now.getSecs();
@@ -698,7 +724,7 @@ void Client::RunNearCongestionTCP () {
 #endif
 	    // perform write
 	    int writelen = (mSettings->mBufLen > burst_remaining) ? burst_remaining : mSettings->mBufLen;
-	    reportstruct->packetLen = write(mySocket, mSettings->mBuf, writelen);
+	    reportstruct->packetLen = sendTCP(mySocket, mSettings->mBuf, writelen, 0);
 	    reportstruct->writecnt++;
 	    assert(reportstruct->packetLen >= (intmax_t) sizeof(struct TCP_burst_payload));
 	    goto ReportNow;
@@ -708,7 +734,7 @@ void Client::RunNearCongestionTCP () {
 	}
 	// printf("pl=%ld\n",reportstruct->packetLen);
 	// perform write
-	reportstruct->packetLen = write(mySocket, mSettings->mBuf, reportstruct->packetLen);
+	reportstruct->packetLen = sendTCP(mySocket, mSettings->mBuf, reportstruct->packetLen, 0);
 	now.setnow();
 	reportstruct->writecnt++;
 	reportstruct->packetTime.tv_sec = now.getSecs();
@@ -810,7 +836,7 @@ void Client::RunRateLimitedTCP () {
 		    reportstruct->sentTime = reportstruct->packetTime;
 		    burst_remaining = burst_size;
 		    // perform write
-		    n = writen(mySocket, mSettings->mBuf, sizeof(struct TCP_burst_payload), &reportstruct->writecnt);
+		    n = writen(mySocket, conn, mSettings->mBuf, sizeof(struct TCP_burst_payload), &reportstruct->writecnt);
 		    WARN(n != sizeof(struct TCP_burst_payload), "burst hdr write failed");
 		    burst_remaining -= n;
 		    reportstruct->packetLen -= n;
@@ -819,7 +845,7 @@ void Client::RunRateLimitedTCP () {
 		    reportstruct->packetLen = burst_remaining;
 		}
 	    }
-	    int len = write(mySocket, mSettings->mBuf, reportstruct->packetLen);
+	    int len = sendTCP(mySocket, mSettings->mBuf, reportstruct->packetLen, 0);
 	    reportstruct->writecnt++;
 	    if (len < 0) {
 	        if (NONFATALTCPWRITERR(errno)) {
@@ -923,7 +949,7 @@ void Client::RunWriteEventsTCP () {
 	    reportstruct->packetTime.tv_usec = now.getUsecs();
 	    WriteTcpTxHdr(reportstruct, writelen, ++burst_id);
 	    reportstruct->sentTime = reportstruct->packetTime;
-	    reportstruct->packetLen = writen(mySocket, mSettings->mBuf, writelen, &reportstruct->writecnt);
+	    reportstruct->packetLen = writen(mySocket, conn, mSettings->mBuf, writelen, &reportstruct->writecnt);
 	    if (reportstruct->packetLen <= 0) {
 		WARN_errno((reportstruct->packetLen < 0), "event writen()");
 		if (reportstruct->packetLen == 0) {
@@ -1401,6 +1427,9 @@ void Client::FinishTrafficActions () {
     FreeReport(myJob);
     if (framecounter)
 	DELETE_PTR(framecounter);
+
+    if (isSSL(mSettings) && conn != 0)
+        SSL_free(conn);
 }
 
 /* -------------------------------------------------------------------
@@ -1545,14 +1574,14 @@ int Client::SendFirstPayload () {
 		    }
 		}
 #endif
+		if (isPeerVerDetect(mSettings) && !isServerReverse(mSettings)) {
+		    PeerXchange();
+		}
 #if HAVE_DECL_MSG_DONTWAIT
 		pktlen = send(mySocket, mSettings->mBuf, pktlen, MSG_DONTWAIT);
 #else
 		pktlen = send(mySocket, mSettings->mBuf, pktlen, 0);
 #endif
-		if (isPeerVerDetect(mSettings) && !isServerReverse(mSettings)) {
-		    PeerXchange();
-		}
 #if HAVE_DECL_TCP_NODELAY
 		if (!isNoDelay(mSettings) && isPeerVerDetect(mSettings) && isTripTime(mSettings)) {
 		    int optflag=0;
@@ -1577,7 +1606,7 @@ void Client::PeerXchange () {
      * Hang read and see if this is a header ack message
      */
     int readlen = isTripTime(mSettings) ? sizeof(struct client_hdr_ack) : (sizeof(struct client_hdr_ack) - sizeof(struct client_hdr_ack_ts));
-    if ((n = recvn(mySocket, reinterpret_cast<char *>(&ack), readlen, 0)) == readlen) {
+    if ((n = recvn(mySocket, conn, reinterpret_cast<char *>(&ack), readlen, 0)) == readlen) {
 	if (ntohl(ack.typelen.type) == CLIENTHDRACK) {
 	    mSettings->peer_version_u = ntohl(ack.version_u);
 	    mSettings->peer_version_l = ntohl(ack.version_l);

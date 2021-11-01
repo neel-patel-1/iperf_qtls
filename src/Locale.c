@@ -91,6 +91,7 @@ Client/Server:\n\
   -N, --nodelay            set TCP no delay, disabling Nagle's Algorithm\n\
   -S, --tos       #        set the socket's IP_TOS (byte) field\n\
   -Z, --tcp-congestion <algo>  set TCP congestion control algorithm (Linux only)\n\
+  -E, --tls       #        use TLS 'v1.2' or 'v1.3'\n\
 \n\
 Server specific:\n\
   -p, --port      #[-#]    server port(s) to listen on/connect to\n\

@@ -64,6 +64,9 @@
 #include "Condition.h"
 #include "packet_ring.h"
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 /* -------------------------------------------------------------------
  * constants
  * ------------------------------------------------------------------- */
@@ -292,6 +295,7 @@ struct thread_Settings {
 #if HAVE_DECL_TCP_NOTSENT_LOWAT
     int mWritePrefetch;
 #endif
+    SSL_CTX *ssl_ctx;
 };
 
 /*
@@ -384,6 +388,9 @@ struct thread_Settings {
 #define FLAG_TCPDRAIN       0x00000200
 #define FLAG_INCRSRCPORT    0x00000400
 #define FLAG_OVERRIDETOS    0x00000800
+#define FLAG_SSL12          0x00001000
+#define FLAG_SSL13          0x00002000
+#define FLAG_KTLS           0x00004000
 
 #define isBuflenSet(settings)      ((settings->flags & FLAG_BUFLENSET) != 0)
 #define isCompat(settings)         ((settings->flags & FLAG_COMPAT) != 0)
@@ -456,6 +463,10 @@ struct thread_Settings {
 #define isBounceBack(settings)     ((settings->flags_extend2 & FLAG_BOUNCEBACK) != 0)
 #define isTcpDrain(settings)       ((settings->flags_extend2 & FLAG_TCPDRAIN) != 0)
 #define isOverrideTOS(settings)    ((settings->flags_extend2 & FLAG_OVERRIDETOS) != 0)
+#define isSSL(settings)    	   ((settings->flags_extend2 & (FLAG_SSL12 | FLAG_SSL13)) != 0)
+#define isSSL12(settings)    	   ((settings->flags_extend2 & FLAG_SSL12) != 0)
+#define isSSL13(settings)    	   ((settings->flags_extend2 & FLAG_SSL13) != 0)
+#define isKTLS(settings)    	   ((settings->flags_extend2 & FLAG_KTLS) != 0)
 
 #define setBuflenSet(settings)     settings->flags |= FLAG_BUFLENSET
 #define setCompat(settings)        settings->flags |= FLAG_COMPAT
@@ -525,6 +536,9 @@ struct thread_Settings {
 #define setBounceBack(settings)    settings->flags_extend2 |= FLAG_BOUNCEBACK
 #define setTcpDrain(settings)      settings->flags_extend2 |= FLAG_TCPDRAIN
 #define setOverrideTOS(settings)   settings->flags_extend2 |= FLAG_OVERRIDETOS
+#define setSSL12(settings)         settings->flags_extend2 |= FLAG_SSL12
+#define setSSL13(settings)         settings->flags_extend2 |= FLAG_SSL13
+#define setKTLS(settings)          settings->flags_extend2 |= FLAG_KTLS
 
 #define unsetBuflenSet(settings)   settings->flags &= ~FLAG_BUFLENSET
 #define unsetCompat(settings)      settings->flags &= ~FLAG_COMPAT

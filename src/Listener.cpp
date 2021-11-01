@@ -1063,7 +1063,7 @@ inline bool Listener::test_permit_key(uint32_t flags, thread_Settings *server, i
     }
     if (!isUDP(server)) {
 	int nread = 0;
-	nread = recvn(server->mSock, server->mBuf, keyoffset + keylen, 0);
+	nread = recvn(server->mSock, 0, server->mBuf, keyoffset + keylen, 0);
 	FAIL_errno((nread < (keyoffset + keylen)), "read key", server);
     }
     strncpy(server->mPermitKey, thiskey->value, MAX_PERMITKEY_LEN + 1);
@@ -1168,7 +1168,7 @@ bool Listener::apply_client_settings_udp (thread_Settings *server) {
 }
 bool Listener::apply_client_settings_tcp (thread_Settings *server) {
     bool rc = false;
-    int nread = recvn(server->mSock, server->mBuf, sizeof(uint32_t), 0);
+    int nread = recvn(server->mSock, 0, server->mBuf, sizeof(uint32_t), 0);
     char *readptr = server->mBuf;
     if (nread == 0) {
 	//peer closed the socket, with no writes e.g. a connect-only test
@@ -1191,7 +1191,7 @@ bool Listener::apply_client_settings_tcp (thread_Settings *server) {
 	// figure out the length of the test header
 	if ((readlen = Settings_ClientTestHdrLen(flags, server)) > 0) {
 	    // read the test settings passed to the server by the client
-	    nread += recvn(server->mSock, readptr, (readlen - (int) sizeof(uint32_t)), 0);
+	    nread += recvn(server->mSock, 0, readptr, (readlen - (int) sizeof(uint32_t)), 0);
 	    FAIL_errno((nread < readlen), "read tcp test info", server);
 	    if (isPermitKey(mSettings)) {
 		if (!test_permit_key(flags, server, readlen)) {
@@ -1292,7 +1292,7 @@ bool Listener::apply_client_settings_tcp (thread_Settings *server) {
 }
 
 int Listener::client_test_ack(thread_Settings *server) {
-    if (isUDP(server))
+    if (isUDP(server) || isSSL(mSettings))
 	return 1;
 
     client_hdr_ack ack;

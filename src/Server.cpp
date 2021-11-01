@@ -70,6 +70,8 @@
 #include "checksums.h"
 #endif
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 /* -------------------------------------------------------------------
  * Stores connected socket and socket info.
@@ -113,6 +115,7 @@ Server::Server (thread_Settings *inSettings) {
     if (sorcvtimer > 0) {
 	SetSocketOptionsReceiveTimeout(mSettings, sorcvtimer);
     }
+    conn = 0;
 }
 
 /* -------------------------------------------------------------------
@@ -134,6 +137,30 @@ Server::~Server () {
 inline bool Server::InProgress () {
     return !(sInterupted || peerclose ||
 	((isServerModeTime(mSettings) || (isModeTime(mSettings) && isReverse(mSettings))) && mEndTime.before(reportstruct->packetTime)));
+}
+
+ssize_t
+Server :: recvTCP( int fd, void *buf, size_t len, int flags )
+{
+    ssize_t retval;
+
+    if (!isSSL(mSettings)) {
+        retval = recv(fd, buf, len, flags);
+    } else {
+        if (conn == 0) {
+            conn = SSL_new(mSettings->ssl_ctx);
+#ifdef __FreeBSD__
+            SSL_set_options(conn, SSL_OP_ENABLE_KTLS);
+#endif
+            SSL_set_fd(conn, fd);
+            if ( SSL_accept(conn) == -1 )   /* do SSL-protocol accept */
+                ERR_print_errors_fp(stderr);
+        }
+        retval = SSL_read(conn, buf, len);
+        if (retval < 0)
+            ERR_print_errors_fp(stderr);
+    }
+    return (retval);
 }
 
 /* -------------------------------------------------------------------
@@ -178,7 +205,7 @@ void Server::RunTCP () {
 		readLen = (mSettings->mBufLen < burst_nleft) ? mSettings->mBufLen : burst_nleft;
 	    reportstruct->emptyreport=1;
 	    if (isburst && (burst_nleft == 0)) {
-		if ((n = recvn(mSettings->mSock, reinterpret_cast<char *>(&burst_info), sizeof(struct TCP_burst_payload), 0)) == sizeof(struct TCP_burst_payload)) {
+		if ((n = recvn(mSettings->mSock, conn, reinterpret_cast<char *>(&burst_info), sizeof(struct TCP_burst_payload), 0)) == sizeof(struct TCP_burst_payload)) {
 		    // burst_info.typelen.type = ntohl(burst_info.typelen.type);
 		    // burst_info.typelen.length = ntohl(burst_info.typelen.length);
 		    burst_info.flags = ntohl(burst_info.flags);
@@ -219,7 +246,7 @@ void Server::RunTCP () {
 		}
 	    }
 	    if (!reportstruct->transit_ready) {
-		n = recv(mSettings->mSock, mSettings->mBuf, readLen, 0);
+		n = recvTCP(mSettings->mSock, mSettings->mBuf, readLen, 0);
 		if (n > 0) {
 		    reportstruct->emptyreport = 0;
 		    if (isburst) {
@@ -277,6 +304,9 @@ void Server::RunTCP () {
     }
     Iperf_remove_host(mSettings);
     FreeReport(myJob);
+
+    if (isSSL(mSettings) && conn != 0)
+        SSL_free(conn);
 }
 
 void Server::RunTcpBounceBack () {
@@ -370,7 +400,7 @@ void Server::ClientReverseFirstRead (void) {
 	uint32_t flags = 0;
 	int readlen = 0;
 	if (isUDP(mSettings)) {
-	    nread = recvn(mSettings->mSock, mSettings->mBuf, mSettings->mBufLen, 0);
+	    nread = recvn(mSettings->mSock, conn, mSettings->mBuf, mSettings->mBufLen, 0);
 	    switch (nread) {
 	    case 0:
 		//peer closed the socket, with no writes e.g. a connect-only test
@@ -395,7 +425,7 @@ void Server::ClientReverseFirstRead (void) {
 		break;
 	    }
 	} else {
-	    nread = recvn(mSettings->mSock, mSettings->mBuf, sizeof(uint32_t), 0);
+	    nread = recvn(mSettings->mSock, conn, mSettings->mBuf, sizeof(uint32_t), 0);
 	    if (nread == 0) {
 		fprintf(stderr, "WARN: zero read on header flags\n");
 		//peer closed the socket, with no writes e.g. a connect-only test
@@ -409,7 +439,7 @@ void Server::ClientReverseFirstRead (void) {
 	    if ((readlen = Settings_ClientTestHdrLen(flags, mSettings)) > 0) {
 		// read the test settings passed to the mSettings by the client
 	        int adj = (readlen - sizeof(uint32_t));
-	        nread = recvn(mSettings->mSock, (mSettings->mBuf + sizeof(uint32_t)), adj, 0);
+	        nread = recvn(mSettings->mSock, conn, (mSettings->mBuf + sizeof(uint32_t)), adj, 0);
 		if (nread == 0) {
 		    peerclose = true;
 		}
