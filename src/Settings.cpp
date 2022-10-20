@@ -530,6 +530,22 @@ static void Setup_TLS(thread_Settings *mExtSettings, int version)
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
+	//
+	// NP Adds the QAT Engine Ciphers and loads as default provider
+	fprintf(stdout, "Setting up Engine\n");
+    ENGINE     *engine;
+    engine = ENGINE_by_id("qatengine");
+    if (engine == NULL) {
+        fprintf(stderr, "QTLS offload is not available\n");
+        exit(1);
+	}
+    if (ENGINE_set_default(engine, ENGINE_METHOD_ALL) == 0) {
+        fprintf(stderr, "QTLS Ciphers unset\n");
+        ENGINE_free(engine);
+        exit(1);
+
+    }
+    ENGINE_free(engine);
 
     if (version == 13) {
         mExtSettings->ssl_ctx = SSL_CTX_new(TLS_method());
@@ -823,6 +839,19 @@ void Settings_Interpret (char option, const char *optarg, struct thread_Settings
             } else {
                 fprintf( stderr, "Invalid -E option argument (TLS not enabled)\n");
             }
+			ENGINE     *engine;
+			engine = ENGINE_by_id("qatengine");
+			if (engine == NULL) {
+				fprintf(stderr, "QTLS offload is not available\n");
+				exit(1);
+			}
+			if (ENGINE_set_default(engine, ENGINE_METHOD_ALL) == 0) {
+				fprintf(stderr, "QTLS Ciphers unset\n");
+				ENGINE_free(engine);
+				exit(1);
+
+			}
+			ENGINE_free(engine);
             break;
 
         case 'F' : // Get the input for the data stream from a file
